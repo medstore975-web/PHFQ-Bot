@@ -1,0 +1,141 @@
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+
+# --- 1. SETUP YOUR TOKEN HERE ---
+# Replace '8889944704:AAFdcPyA7c0a9MqheNkwIBF5ZkL86cJ8VxY' with the token from BotFather
+TOKEN = '8889944704:AAFdcPyA7c0a9MqheNkwIBF5ZkL86cJ8VxY'
+
+# --- 2. YOUR PRODUCT DATA (NEXO SHEET SIMULATION) ---
+PRODUCTS = {
+    "NX1": {"name": "Tretinoin 0.025% cream", "pack": "20gm", "unit": "tubes", "price": 2.00, "pack_qty": 10},
+    "NX2": {"name": "Tretinoin 0.05% Cream", "pack": "20gm", "unit": "tubes", "price": 3.00, "pack_qty": 10},
+    "NX3": {"name": "Clindamycin gel", "pack": "15gm", "unit": "tubes", "price": 3.00, "pack_qty": 3},
+    "NX4": {"name": "Clotrimazole 1% cream", "pack": "15gm", "unit": "tubes", "price": 3.00, "pack_qty": 3},
+}
+
+user_carts = {}
+
+def calculate_quote(user_id):
+    cart = user_carts.get(user_id, {})
+    if not cart:
+        return None
+
+    quote_lines = []
+    total_pills = 0
+    subtotal = 0
+    
+    for nx_id, qty in cart.items():
+        product = PRODUCTS[nx_id]
+        line_total = product['price'] * product['pack_qty'] * qty
+        subtotal += line_total
+        total_pills += (qty * product['pack_qty']) 
+        
+        line = f"{product['name']} ({product['pack']}) - {qty} :- ${line_total} for {qty * product['pack_qty']} {product['unit']}"
+        quote_lines.append(line)
+
+    shipping = 35.00
+    total = subtotal + shipping
+    
+    quote_text = "The total cost including shipping is as follows:\n\n"
+    quote_text += "\n\n".join(quote_lines)
+    quote_text += f"\n\nShipping including duty and tariff charges :- ${shipping}"
+    quote_text += f"\n\nTotal Order Value :- ${total} USD"
+    quote_text += f"\n\nTotal pills: {total_pills}"
+    
+    if total_pills < 500:
+        quote_text += "\n\nNote: Shipping remains the same for orders up to 500 pills. You may increase the quantity or add other products to maximize the value of your shipment."
+        
+    quote_text += "\n\n📝 EDITABLE PRICE BOX — copy, change any price, paste back:\n"
+    for nx_id, qty in cart.items():
+        p = PRODUCTS[nx_id]
+        quote_text += f"\n{p['name']} ({p['pack']}) - ${p['price']:.2f}"
+
+    return quote_text
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Welcome to the NEXO AI SMART QUOTE SYSTEM! 🤖\n\n"
+        "Commands:\n"
+        "/catalog - View products\n"
+        "/cart - View your current items\n"
+        "/quote - Generate your quote\n"
+        "/clear - Empty your cart"
+    )
+
+async def catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = []
+    for nx_id, item in PRODUCTS.items():
+        text = f"{item['name']} - ${item['price']} per {item['pack']}"
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"add_{nx_id}")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a product to add to your cart:", reply_markup=reply_markup)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data.startswith("add_"):
+        nx_id = data.split("_")[1]
+        product = PRODUCTS[nx_id]
+        
+        if user_id not in user_carts:
+            user_carts[user_id] = {}
+            
+        if nx_id in user_carts[user_id]:
+            user_carts[user_id][nx_id] += 1
+        else:
+            user_carts[user_id][nx_id] = 1
+            
+        await query.edit_message_text(text=f"Added {product['name']} to cart. (Use /cart to view, /quote to checkout)")
+
+async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cart = user_carts.get(user_id, {})
+    
+    if not cart:
+        await update.message.reply_text("Your cart is empty.")
+        return
+        
+    text = "🛒 **Your Cart:**\n\n"
+    for nx_id, qty in cart.items():
+        product = PRODUCTS[nx_id]
+        text += f"• {product['name']} x {qty}\n"
+        
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def generate_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    quote = calculate_quote(user_id)
+    
+    if not quote:
+        await update.message.reply_text("Your cart is empty. Use /catalog to add items.")
+        return
+        
+    await update.message.reply_text(f"```\n{quote}\n```", parse_mode='MarkdownV2')
+
+async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id in user_carts:
+        del user_carts[user_id]
+    await update.message.reply_text("Your cart has been cleared.")
+
+if __name__ == '__main__':
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+    
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("catalog", catalog))
+    app.add_handler(CommandHandler("cart", view_cart))
+    app.add_handler(CommandHandler("quote", generate_quote))
+    app.add_handler(CommandHandler("clear", clear_cart))
+    
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    print("NEXO Bot is running...")
+    app.run_polling()
